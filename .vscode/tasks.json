@@ -1,0 +1,61 @@
+{
+    // See https://go.microsoft.com/fwlink/?LinkId=733558
+    // for the documentation about the tasks.json format
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "pip install requirements",
+            "type": "shell",
+            "command": "${config:python.pythonPath} -m pip install -r ${workspaceFolder}/requirements.txt",
+            "windows": {
+                "command": "${config:python.pythonPath}/Scripts/python -m pip install -r ${workspaceFolder}/requirements.txt"
+            },
+        },
+        {
+            "label": "pip upgrade",
+            "type": "shell",
+            "command": "${config:python.pythonPath} -m pip install --upgrade pip",
+            "windows": {
+                "command": "${config:python.pythonPath}/Scripts/python -m pip install --upgrade pip"
+            },
+        },
+        {
+            "label": "kaggle dataset version",
+            "type": "shell",
+            "command": "kaggle datasets version -m 'Updated data'",
+            "options": {
+                "cwd": "${workspaceFolder}/${input:projectFolder}"
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "kaggle dataset download",
+            "type": "shell",
+            "command": "kaggle datasets download ${input:userName}/${input:datasetName} -p ${input:datasetName} --unzip --force",
+            "options": {
+                "cwd": "/kaggle/input"
+            },
+            "problemMatcher": []
+        }
+    ],
+    "inputs": [
+        {
+            "id": "projectFolder",
+            "type": "pickString",
+            "description": "Select directory with a project",
+            "options": [
+                ""
+            ]
+        },
+        {
+            "id": "userName",
+            "type": "promptString",
+            "description": "Enter the user name for the owner of kaggle resource"
+        },
+        {
+            "id": "datasetName",
+            "type": "promptString",
+            "description": "Enter name of dataset"
+        }
+    ]
+}

@@ -1,0 +1,35 @@
+{
+    "name": "Kaggle Dev GPU",
+    "image": "gcr.io/kaggle-gpu-images/python", // Remember to pull latest before rebuilding.
+    "mounts": [
+        "type=bind,source=${localWorkspaceFolder}/data/input,target=/kaggle/input",
+        "type=bind,source=${localWorkspaceFolder}/data/results,target=/kaggle/results",
+        "type=bind,source=${localWorkspaceFolder}/data/working,target=/kaggle/working"
+    ],
+    "extensions": [
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        // Editing/dev process
+        "streetsidesoftware.code-spell-checker",
+        "wayou.vscode-todo-highlight",
+        "janisdd.vscode-edit-csv",
+        "davidanson.vscode-markdownlint",
+        // VCS helpers
+        "donjayamanne.githistory",
+        "eamodio.gitlens"
+    ],
+    "settings": {
+        "terminal.integrated.shell.linux": "/bin/bash",
+        "python.pythonPath": "/opt/conda/bin/python"
+    },
+    "containerEnv": {
+        "KAGGLE_MODE": "GPU"
+    },
+    "postCreateCommand": ".devcontainer/setup.sh",
+    "postAttachCommand": ".devcontainer/setup-mounted.sh",
+    "devPort": 8888,
+    "shutdownAction": "none",
+    "runArgs": [
+        "--runtime=nvidia"
+    ]
+}

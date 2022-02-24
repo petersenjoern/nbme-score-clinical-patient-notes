@@ -1,0 +1,33 @@
+{
+    "python.pythonPath": "/opt/conda/bin/python",
+    "jupyter.notebookFileRoot": "${workspaceFolder}",
+    "jupyter.useNotebookEditor": true,
+    // Python formatting.
+    "python.formatting.provider": "autopep8",
+    "python.formatting.blackArgs": [
+        "--line-length",
+        "120"
+    ],
+    // Python linting.
+    "python.linting.flake8Enabled": false,
+    "python.linting.pylintEnabled": true,
+    "python.linting.enabled": true,
+    "python.linting.flake8Args": [
+        "--max-line-length=120",
+        "--ignore=E402"
+    ],
+    // Editor.
+    "editor.renderWhitespace": "all",
+    "editor.tabSize": 4,
+    "editor.formatOnSave": true,
+    "[markdown]": {
+        "editor.wordWrap": "on",
+        "editor.quickSuggestions": false,
+        "editor.tabSize": 2
+    },
+    "editor.insertSpaces": true,
+    "editor.detectIndentation": false,
+    "files.insertFinalNewline": true,
+    // Additional extensions settings
+    "todohighlight.keywordsPattern": "(TODO|FIXME)"
+}
