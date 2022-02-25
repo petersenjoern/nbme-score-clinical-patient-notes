@@ -1,0 +1,11 @@
+model:
+  name: somekindofbert
+
+hyperparams:
+  epochs: 25
+  learning_rate: 5e-6
+
+datasets:
+  train: x
+  test: y
+
