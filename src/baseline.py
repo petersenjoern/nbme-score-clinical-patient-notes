@@ -2,7 +2,7 @@
 # Libraries
 import pathlib
 import yaml
-from utils.misc import seed_env
+from utils.misc import seed_env, load_and_prepare_nbme_data
 import tensorflow as tf
 
 # Paths
@@ -21,4 +21,12 @@ seed_env(424)
 
 
 #%%
+cfg.get("datasets")
+x=load_and_prepare_nbme_data(paths=cfg["datasets"], train=True)
 
+
+# %%
+
+x.head(15)
+
+# %%

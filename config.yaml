@@ -6,6 +6,8 @@ hyperparams:
   learning_rate: 5e-6
 
 datasets:
-  train: x
-  test: y
+  train: ./data/input/train.csv
+  test: ./data/input/test.csv
+  features: ./data/input/features.csv
+  patient_notes: ./data/input/patient_notes.csv
 
