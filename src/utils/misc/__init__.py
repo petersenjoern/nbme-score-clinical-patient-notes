@@ -36,6 +36,8 @@ def load_and_prepare_nbme_data(paths: Dict[str, str], train:bool=False) -> pd.Da
     df["feature_text"] = df["feature_text"].apply(normalize_feature_text)
     df["feature_text"] = df["feature_text"].apply(normalize_spaces)
 
+    df = manual_curation_of_entries(df)
+
     return df
 
 
@@ -54,3 +56,9 @@ def normalize_spaces(text: str) -> str:
     text = re.sub('\t', ' ', text)
     text = re.sub('\r', ' ', text)
     return text
+
+def manual_curation_of_entries(df: pd.DataFrame) -> pd.DataFrame:
+    """curate entries manually"""
+    
+    df.loc[(df["location"] == "['85 99', '126 138', '126 131;143 151']"), "location"] = "['85 99', '126 151']"
+    return df

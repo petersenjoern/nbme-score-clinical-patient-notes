@@ -54,8 +54,7 @@ def yield_rows_with_same_patient_id(df: pd.DataFrame):
         yield df_for_one_patient
 
 
-#TODO: replace df.loc[df["location"] == "['85 99', '126 138', '126 131;143 151']"] 
-def extract_all_from_same_content(df: pd.DataFrame) -> Tuple[List, List]:
+def format_anno_from_same_patient(df: pd.DataFrame) -> Tuple[List, List]:
     """
     For each patient dataset (each contains 16 rows), prepare the data
     to a {"content": "patient has visited the doctor on the xx", 
@@ -71,22 +70,27 @@ def extract_all_from_same_content(df: pd.DataFrame) -> Tuple[List, List]:
             unique_labels.add(tag)
             content = str(row["pn_history"])
             
-            # clean "['696 724', '123 456']" and "['intermittent episodes', 'episode']"
-            anno_locs = row["location"].strip("']['").split(', ')
+            # clean annotation locations like:
+            # "['696 724', '123 456']" and "['intermittent episodes', 'episode']"
             annos = row["annotation"].replace("'","").strip("][").split(', ')
-            for anno_loc, anno in zip(anno_locs, annos):
+            anno_locs = row["location"].strip("']['").split(', ')
+            # for each list item, try to split other signs like ;
+            anno_locs = [anno_loc.replace("'", "").split(";") for anno_loc in anno_locs]
+            
+            #flatten list of lists to list
+            anno_locs = [item for sublist in anno_locs for item in sublist]
+            for anno_loc, _anno in zip(anno_locs, annos):
                 start, end = tuple(anno_loc.replace("'", "").split(" "))
                 start, end = int(start), int(end)
                 text = content[start:end]
-                assert text == anno
                 annotations.append(dict(start=start, end=end, text=text, tag=tag))
             preprocessed_example = {"content": content, "annotations": annotations}
             preprocessed_data.append(preprocessed_example)
     return preprocessed_data, unique_labels
 
 #%%
-oo, rr = extract_all_from_same_content(df)
-
+data, unique_labels = format_anno_from_same_patient(df)
+print(data, unique_labels)
 # %%
 # from tf.keras.utils import Sequence
 # from transformers import AutoTokenizer
