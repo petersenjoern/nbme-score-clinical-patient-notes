@@ -5,6 +5,7 @@ import numpy as np
 import tensorflow as tf
 import pandas as pd
 from typing import Dict, Tuple, List
+import itertools
 
 def seed_env(seed: int) -> None:
     """seed various services & libraries"""
@@ -83,7 +84,7 @@ def yield_rows_with_same_patient_id(df: pd.DataFrame):
         yield df_for_one_patient
 
 
-def format_annos_from_same_patient(df: pd.DataFrame) -> Tuple[List, List]:
+def format_annotations_from_same_patient(df: pd.DataFrame) -> Tuple[List, List]:
     """
     For each patient dataset (each contains 16 rows), prepare the data
     to a {"content": "patient has visited the doctor on the xx", 
@@ -116,3 +117,67 @@ def format_annos_from_same_patient(df: pd.DataFrame) -> Tuple[List, List]:
             preprocessed_example = {"content": content, "annotations": annotations}
             preprocessed_data.append(preprocessed_example)
     return preprocessed_data, unique_labels
+
+
+class LabelSet:
+    """ Align target labels with tokens"""
+
+    def __init__(self, labels: List[str]):
+        """ Create BILU target labels"""
+        
+        self.labels_to_id = {}
+        self.ids_to_label = {}
+        self.labels_to_id["O"] = 0
+        self.ids_to_label[0] = "O"
+        num = 0  # in case there are no labels
+        # Writing BILU will give us incremental ids for the labels
+        for _num, (label, s) in enumerate(itertools.product(labels, "BILU")):
+            num = _num + 1  # skip 0
+            l = f"{s}-{label}"
+            self.labels_to_id[l] = num
+            self.ids_to_label[num] = l
+        # Add the OUTSIDE label - no label for the token
+    
+    def __getitem__(self, item):
+        return getattr(self, item)
+
+    def align_tokens_and_annotations_bilou(self, tokenized, annotations):
+        """align the tokens with the annotations in BILU"""
+        
+        tokens = tokenized.tokens
+        aligned_labels = ["O"] * len(
+            tokens
+        )  # Make a list to store our labels the same length as our tokens
+        for anno in annotations:
+            annotation_token_ix_set = (
+                set()
+            )  # A set that stores the token indices of the annotation
+            for char_ix in range(anno["start"], anno["end"]):
+
+                token_ix = tokenized.char_to_token(char_ix)
+                if token_ix is not None:
+                    annotation_token_ix_set.add(token_ix)
+            if len(annotation_token_ix_set) == 1:
+                # If there is only one token
+                token_ix = annotation_token_ix_set.pop()
+                prefix = (
+                    "U"  # This annotation spans one token so is prefixed with U for unique
+                )
+                aligned_labels[token_ix] = f"{prefix}-{anno['label']}"
+
+            else:
+
+                last_token_in_anno_ix = len(annotation_token_ix_set) - 1
+                for num, token_ix in enumerate(sorted(annotation_token_ix_set)):
+                    if num == 0:
+                        prefix = "B"
+                    elif num == last_token_in_anno_ix:
+                        prefix = "L"  # Its the last token
+                    else:
+                        prefix = "I"  # We're inside of a multi token annotation
+                    aligned_labels[token_ix] = f"{prefix}-{anno['tag']}"
+        return aligned_labels
+
+    def get_aligned_label_ids_from_annotations(self, tokenized_text, annotations):
+        raw_labels = self.align_tokens_and_annotations_bilou(tokenized_text, annotations)    
+        return list(map(self.labels_to_id.get, raw_labels))

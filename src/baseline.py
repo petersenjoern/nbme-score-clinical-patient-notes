@@ -2,7 +2,7 @@
 # Libraries
 import pathlib
 import yaml
-from utils.misc import seed_env, load_and_prepare_nbme_data, format_annos_from_same_patient
+from utils.misc import seed_env, load_and_prepare_nbme_data, format_annotations_from_same_patient, LabelSet
 import tensorflow as tf
 
 
@@ -37,11 +37,14 @@ df=load_and_prepare_nbme_data(paths=cfg["datasets"], train=True)
 
 
 #%%
-data, unique_labels = format_annos_from_same_patient(df)
+data, unique_labels = format_annotations_from_same_patient(df)
 print(data, unique_labels)
+
+label_set_train = LabelSet(labels=unique_labels)
 # %%
-# from tf.keras.utils import Sequence
-# from transformers import AutoTokenizer
+from tf.keras.utils import Sequence
+from transformers import AutoTokenizer
+tokenizer = AutoTokenizer.from_pretrained("dmis-lab/biobert-base-cased-v1.1")
 
 # tokenizer = AutoTokenizer.from_pretrained("dmis-lab/biobert-base-cased-v1.1")
 
