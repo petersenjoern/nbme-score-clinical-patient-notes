@@ -1,5 +1,5 @@
 model:
-  name: somekindofbert
+  name: dmis-lab/biobert-base-cased-v1.1
 
 hyperparams:
   epochs: 25

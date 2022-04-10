@@ -5,13 +5,14 @@ import yaml
 from utils.misc import seed_env, load_and_prepare_nbme_data, format_annotations_from_same_patient, LabelSet
 import tensorflow as tf
 from tensorflow.keras.utils import Sequence
-from transformers import AutoTokenizer
+from transformers import AutoTokenizer, AdamW, BertForTokenClassification, optimization
 from typing import Dict, Iterator, List, Tuple, Union, Any
 from dataclasses import dataclass
 
 # Paths
 PATH_BASE = pathlib.Path(__file__).absolute().parents[1]
 PATH_YAML = PATH_BASE.joinpath("config.yaml")
+DEVICE = "cpu"
 
 # Constants
 EPSILON = tf.keras.backend.epsilon() #to prevent divide by zero error
@@ -30,8 +31,12 @@ data, unique_labels = format_annotations_from_same_patient(df)
 print(data[0], unique_labels)
 
 label_set = LabelSet(labels=unique_labels)
-tokenizer = AutoTokenizer.from_pretrained("dmis-lab/biobert-base-cased-v1.1")
-
+num_labels = len(label_set.ids_to_label.values())
+tokenizer = AutoTokenizer.from_pretrained(cfg.get("model").get("name"))
+model_pretrained = BertForTokenClassification.from_pretrained(cfg.get("model").get("name"), num_labels=num_labels).to(DEVICE)
+model_pretrained.config.id2label = label_set["ids_to_label"]
+model_pretrained.config.label2id = label_set["labels_to_id"]
+optimizer = AdamW(model_pretrained.parameters(), lr=0.0005)
 # %%
 
 @dataclass
