@@ -2,8 +2,11 @@ model:
   name: dmis-lab/biobert-base-cased-v1.1
 
 hyperparams:
-  epochs: 25
+  tokens_per_batch: 32
+  batch_size: 256
+  epochs: 23
   learning_rate: 5e-6
+  shuffle: True
 
 datasets:
   train: ./data/input/train.csv
@@ -11,3 +14,8 @@ datasets:
   features: ./data/input/features.csv
   patient_notes: ./data/input/patient_notes.csv
 
+caching:
+  tensorboard_profiler: gpu/
+  tensorboard_metrics: metrics/
+  finetuned_ner_model: model/
+  finetuned_ner_metrics: model/evaluation_metrics.json

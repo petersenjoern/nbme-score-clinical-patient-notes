@@ -2,9 +2,11 @@
 # Libraries
 import pathlib
 import yaml
+import torch
+from torch.utils.data.dataloader import DataLoader
+from torch.utils.data import Dataset
+
 from utils.misc import seed_env, load_and_prepare_nbme_data, format_annotations_from_same_patient, LabelSet
-import tensorflow as tf
-from tensorflow.keras.utils import Sequence
 from transformers import AutoTokenizer, AdamW, BertForTokenClassification, optimization
 from typing import Dict, Iterator, List, Tuple, Union, Any
 from dataclasses import dataclass
@@ -12,10 +14,8 @@ from dataclasses import dataclass
 # Paths
 PATH_BASE = pathlib.Path(__file__).absolute().parents[1]
 PATH_YAML = PATH_BASE.joinpath("config.yaml")
-DEVICE = "cpu"
+DEVICE = "cuda:1" if torch.cuda.is_available() else "cpu"
 
-# Constants
-EPSILON = tf.keras.backend.epsilon() #to prevent divide by zero error
 
 # Setup
 with open(PATH_YAML, "r") as file:
@@ -25,10 +25,8 @@ seed_env(424)
 
 
 #%%
-cfg.get("datasets")
-df=load_and_prepare_nbme_data(paths=cfg["datasets"], train=True)
-data, unique_labels = format_annotations_from_same_patient(df)
-print(data[0], unique_labels)
+df_train=load_and_prepare_nbme_data(paths=cfg["datasets"], train=True)
+data_train, unique_labels = format_annotations_from_same_patient(df_train)
 
 label_set = LabelSet(labels=unique_labels)
 num_labels = len(label_set.ids_to_label.values())
@@ -44,13 +42,13 @@ class TrainingExample:
     input_ids: List[int]
     attention_masks: List[int]
     labels: List[int]
-class CustomDataset(Sequence):
+class CustomDataset(Dataset):
     def __init__(
         self,
         data,
-        label_set,
-        tokenizer,
-        tokens_per_batch=32,
+        label_set: LabelSet,
+        tokenizer: AutoTokenizer,
+        tokens_per_batch:int=32,
         window_stride=None,
         *args,
         **kwargs
@@ -120,9 +118,84 @@ class CustomDataset(Sequence):
         """Return one full preprocessed example by index"""
         return self.training_examples[idx]
 
-#%%
-x=CustomDataset(data=data, label_set=label_set, tokenizer=tokenizer)
+class TraingingBatch:
+    def __getitem__(self, item):
+        return getattr(self, item)
 
+    def __init__(self, examples: List[TrainingExample]):
+        self.input_ids: torch.Tensor
+        self.attention_masks: torch.Tensor
+        self.labels: torch.Tensor
+        input_ids: List[int] = []
+        masks: List[int] = []
+        labels: List[int] = []
+        for ex in examples:
+            input_ids.append(ex.input_ids)
+            masks.append(ex.attention_masks)
+            labels.append(ex.labels)
+        self.input_ids = torch.LongTensor(input_ids)
+        self.attention_masks = torch.LongTensor(masks)
+        self.labels = torch.LongTensor(labels)
+
+
+#%%
+trainset=CustomDataset(data=data_train, label_set=label_set, tokenizer=tokenizer)
+trainloader = DataLoader(
+    trainset,
+    collate_fn=TraingingBatch,
+    batch_size=cfg.get("hyperparams").get("batch_size"),
+    shuffle=cfg.get("hyperparams").get("shuffle"),
+)
 # %%
-x[0]
+def train(cfg: dict[str, str], model: BertForTokenClassification, optimizer: optimization, dataloader: DataLoader, labelset: LabelSet,
+    save_directory:pathlib.Path=None) -> BertForTokenClassification:
+
+
+    for epoch in range(cfg["hyperparams"]["epochs"]):
+        print("\nStart of epoch %d" % (epoch,))
+        current_loss = 0
+        epoch_true_sample_values = []
+        epoch_pred_sample_values = []
+        for step, batch in enumerate(dataloader):
+            # move the batch tensors to the same device as the model
+            batch.attention_masks = batch.attention_masks.to(DEVICE)
+            batch.input_ids = batch.input_ids.to(DEVICE)
+            batch.labels = batch.labels.to(DEVICE)
+            # send 'input_ids', 'attention_mask' and 'labels' to the model
+            outputs = model(
+                input_ids=batch.input_ids,
+                attention_mask=batch.attention_masks,
+                labels=batch.labels,
+            )
+            # the outputs are of shape (loss, logits)
+            loss = outputs[0]
+            # with the .backward method it calculates all 
+            # of  the gradients used for autograd
+            loss.backward()
+            # NOTE: if we append `loss` (a tensor) we will force the GPU to save
+            # the loss into its memory, potentially filling it up. To avoid this
+            # we rather store its float value, which can be accessed through the
+            # `.item` method
+            current_loss += loss.item()
+            
+            if step % 8 == 0 and step > 0:
+                # update the model using the optimizer
+                optimizer.step()
+                # once we update the model we set the gradients to zero
+                optimizer.zero_grad()
+                # store the loss value for visualization
+                print(current_loss)
+                current_loss = 0
+
+        # update the model one last time for this epoch
+        optimizer.step()
+        optimizer.zero_grad()
+
+    if save_directory:
+        model.save_pretrained(save_directory)
+    return model
+# %%
+model_finetuned = train(cfg=cfg, model=model_pretrained, dataloader=trainloader, labelset=label_set, optimizer=optimizer,
+    save_directory=cfg["caching"]["finetuned_ner_model"])
+
 # %%

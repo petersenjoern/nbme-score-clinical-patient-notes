@@ -1,8 +1,10 @@
 # nbme-score-clinical-patient-notes
-Kaggle competition nbme-score-clinical-patient-notes
+
+kaggle competitions nbme-score-clinical-patient-notes
 
 ### Download data for the competitions
-competitions download nbme-score-clinical-patient-notes
+
+kaggle competitions download nbme-score-clinical-patient-notes
 
 ### Training with a GPU
 
