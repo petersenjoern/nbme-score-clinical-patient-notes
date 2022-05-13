@@ -5,6 +5,11 @@ import numpy as np
 import pandas as pd
 from typing import Dict, Tuple, List
 import itertools
+import torch
+from torch.utils.data import Dataset
+from transformers import AutoTokenizer
+from dataclasses import dataclass
+
 
 
 def seed_env(seed: int) -> None:
@@ -35,7 +40,8 @@ def load_and_prepare_nbme_data(paths: Dict[str, str], train: bool = False) -> pd
     df["feature_text"] = df["feature_text"].apply(normalize_feature_text)
     df["feature_text"] = df["feature_text"].apply(normalize_spaces)
 
-    df = manual_curation_of_entries(df)
+    if train:
+        df = manual_curation_of_entries(df)
 
     return df
 
@@ -183,7 +189,112 @@ class LabelSet:
                     aligned_labels[token_ix] = f"{prefix}-{anno['tag']}"
         return aligned_labels
 
-    def get_aligned_label_ids_from_annotations(self, tokenized_text, annotations):
+    def get_aligned_label_ids_from_annotations(self, tokenized_text, annotations) -> List:
         raw_labels = self.align_tokens_and_annotations_bilou(
             tokenized_text, annotations)
         return list(map(self.labels_to_id.get, raw_labels))
+
+
+
+@dataclass
+class TrainingExample:
+    input_ids: List[int]
+    attention_masks: List[int]
+    labels: List[int]
+
+
+class CustomDataset(Dataset):
+    def __init__(
+        self,
+        data,
+        label_set: LabelSet,
+        tokenizer: AutoTokenizer,
+        tokens_per_batch: int = 32,
+        window_stride=None,
+        *args,
+        **kwargs
+    ):
+        self.label_set = label_set
+        if window_stride is None:
+            self.window_stride = tokens_per_batch
+        self.tokenizer = tokenizer
+        for example in data:
+            # changes tag key to label
+            for a in example["annotations"]:
+                a["label"] = a["tag"]
+        self.texts = []
+        self.annotations = []
+
+        # Move up in loop above
+        for example in data:
+            self.texts.append(example["content"])
+            self.annotations.append(example["annotations"])
+        # TOKENIZE All THE DATA
+        tokenized_batch = self.tokenizer(self.texts, add_special_tokens=False)
+        # ALIGN LABELS ONE EXAMPLE AT A TIME
+        aligned_labels = []
+        for ix in range(len(tokenized_batch.encodings)):
+            encoding = tokenized_batch.encodings[ix]
+            raw_annotations = self.annotations[ix]
+            aligned = label_set.get_aligned_label_ids_from_annotations(
+                encoding, raw_annotations
+            )
+            aligned_labels.append(aligned)
+        # END OF LABEL ALIGNMENT
+
+        # MAKE A LIST OF TRAINING EXAMPLES. (This is where we add padding)
+        self.training_examples: List[TrainingExample] = []
+        for encoding, label in zip(tokenized_batch.encodings, aligned_labels):
+            length = len(label)  # How long is this sequence
+            for start in range(0, length, self.window_stride):
+
+                end = min(start + tokens_per_batch, length)
+
+                # How much padding do we need ?
+                padding_to_add = max(0, tokens_per_batch - end + start)
+                self.training_examples.append(
+                    TrainingExample(
+                        # Record the tokens
+                        # The ids of the tokens
+                        input_ids=encoding.ids[start:end]
+                        + [self.tokenizer.pad_token_id]
+                        * padding_to_add,  # padding if needed
+                        labels=(
+                            label[start:end]
+                            + [-100] * padding_to_add  # padding if needed
+                        ),  # -100 is a special token for padding of labels,
+                        attention_masks=(
+                            encoding.attention_mask[start:end]
+                            + [0]
+                            * padding_to_add  # 0'd attention masks where we added padding
+                        ),
+                    )
+                )
+
+    def __len__(self):
+        """Return length of data processed"""
+        return len(self.training_examples)
+
+    def __getitem__(self, idx) -> TrainingExample:
+        """Return one full preprocessed example by index"""
+        return self.training_examples[idx]
+
+
+class TraingingBatch:
+    def __getitem__(self, item):
+        return getattr(self, item)
+
+    def __init__(self, examples: List[TrainingExample]):
+        self.input_ids: torch.Tensor
+        self.attention_masks: torch.Tensor
+        self.labels: torch.Tensor
+        input_ids: List[int] = []
+        masks: List[int] = []
+        labels: List[int] = []
+        for ex in examples:
+            input_ids.append(ex.input_ids)
+            masks.append(ex.attention_masks)
+            labels.append(ex.labels)
+        self.input_ids = torch.LongTensor(input_ids)
+        self.attention_masks = torch.LongTensor(masks)
+        self.labels = torch.LongTensor(labels)

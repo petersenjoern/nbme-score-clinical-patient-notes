@@ -3,7 +3,7 @@
     "jupyter.notebookFileRoot": "${workspaceFolder}",
     "jupyter.useNotebookEditor": true,
     // Python formatting.
-    "python.formatting.provider": "autopep8",
+    "python.formatting.provider": "black",
     "python.formatting.blackArgs": [
         "--line-length",
         "120"
@@ -12,6 +12,7 @@
     "python.linting.flake8Enabled": false,
     "python.linting.pylintEnabled": true,
     "python.linting.enabled": true,
+    "python.linting.lintOnSave": true,
     "python.linting.flake8Args": [
         "--max-line-length=120",
         "--ignore=E402"
