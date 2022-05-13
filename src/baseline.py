@@ -1,4 +1,4 @@
-#%%
+# %%
 # Libraries
 import pathlib
 import yaml
@@ -24,31 +24,35 @@ with open(PATH_YAML, "r") as file:
 seed_env(424)
 
 
-#%%
-df_train=load_and_prepare_nbme_data(paths=cfg["datasets"], train=True)
+# %%
+df_train = load_and_prepare_nbme_data(paths=cfg["datasets"], train=True)
 data_train, unique_labels = format_annotations_from_same_patient(df_train)
 
 label_set = LabelSet(labels=unique_labels)
 num_labels = len(label_set.ids_to_label.values())
 tokenizer = AutoTokenizer.from_pretrained(cfg.get("model").get("name"))
-model_pretrained = BertForTokenClassification.from_pretrained(cfg.get("model").get("name"), num_labels=num_labels).to(DEVICE)
+model_pretrained = BertForTokenClassification.from_pretrained(
+    cfg.get("model").get("name"), num_labels=num_labels).to(DEVICE)
 model_pretrained.config.id2label = label_set["ids_to_label"]
 model_pretrained.config.label2id = label_set["labels_to_id"]
 optimizer = AdamW(model_pretrained.parameters(), lr=0.0005)
 # %%
+
 
 @dataclass
 class TrainingExample:
     input_ids: List[int]
     attention_masks: List[int]
     labels: List[int]
+
+
 class CustomDataset(Dataset):
     def __init__(
         self,
         data,
         label_set: LabelSet,
         tokenizer: AutoTokenizer,
-        tokens_per_batch:int=32,
+        tokens_per_batch: int = 32,
         window_stride=None,
         *args,
         **kwargs
@@ -68,9 +72,9 @@ class CustomDataset(Dataset):
         for example in data:
             self.texts.append(example["content"])
             self.annotations.append(example["annotations"])
-        ###TOKENIZE All THE DATA
+        # TOKENIZE All THE DATA
         tokenized_batch = self.tokenizer(self.texts, add_special_tokens=False)
-        ###ALIGN LABELS ONE EXAMPLE AT A TIME
+        # ALIGN LABELS ONE EXAMPLE AT A TIME
         aligned_labels = []
         for ix in range(len(tokenized_batch.encodings)):
             encoding = tokenized_batch.encodings[ix]
@@ -79,9 +83,9 @@ class CustomDataset(Dataset):
                 encoding, raw_annotations
             )
             aligned_labels.append(aligned)
-        ###END OF LABEL ALIGNMENT
+        # END OF LABEL ALIGNMENT
 
-        ###MAKE A LIST OF TRAINING EXAMPLES. (This is where we add padding)
+        # MAKE A LIST OF TRAINING EXAMPLES. (This is where we add padding)
         self.training_examples: List[TrainingExample] = []
         for encoding, label in zip(tokenized_batch.encodings, aligned_labels):
             length = len(label)  # How long is this sequence
@@ -94,7 +98,8 @@ class CustomDataset(Dataset):
                 self.training_examples.append(
                     TrainingExample(
                         # Record the tokens
-                        input_ids=encoding.ids[start:end]  # The ids of the tokens
+                        # The ids of the tokens
+                        input_ids=encoding.ids[start:end]
                         + [self.tokenizer.pad_token_id]
                         * padding_to_add,  # padding if needed
                         labels=(
@@ -109,7 +114,6 @@ class CustomDataset(Dataset):
                     )
                 )
 
-
     def __len__(self):
         """Return length of data processed"""
         return len(self.training_examples)
@@ -117,6 +121,7 @@ class CustomDataset(Dataset):
     def __getitem__(self, idx) -> TrainingExample:
         """Return one full preprocessed example by index"""
         return self.training_examples[idx]
+
 
 class TraingingBatch:
     def __getitem__(self, item):
@@ -138,8 +143,9 @@ class TraingingBatch:
         self.labels = torch.LongTensor(labels)
 
 
-#%%
-trainset=CustomDataset(data=data_train, label_set=label_set, tokenizer=tokenizer)
+# %%
+trainset = CustomDataset(
+    data=data_train, label_set=label_set, tokenizer=tokenizer)
 trainloader = DataLoader(
     trainset,
     collate_fn=TraingingBatch,
@@ -147,9 +153,10 @@ trainloader = DataLoader(
     shuffle=cfg.get("hyperparams").get("shuffle"),
 )
 # %%
-def train(cfg: dict[str, str], model: BertForTokenClassification, optimizer: optimization, dataloader: DataLoader, labelset: LabelSet,
-    save_directory:pathlib.Path=None) -> BertForTokenClassification:
 
+
+def train(cfg: Dict[str, str], model: BertForTokenClassification, optimizer: optimization, dataloader: DataLoader, labelset: LabelSet,
+          save_directory: pathlib.Path = None) -> BertForTokenClassification:
 
     for epoch in range(cfg["hyperparams"]["epochs"]):
         print("\nStart of epoch %d" % (epoch,))
@@ -169,7 +176,7 @@ def train(cfg: dict[str, str], model: BertForTokenClassification, optimizer: opt
             )
             # the outputs are of shape (loss, logits)
             loss = outputs[0]
-            # with the .backward method it calculates all 
+            # with the .backward method it calculates all
             # of  the gradients used for autograd
             loss.backward()
             # NOTE: if we append `loss` (a tensor) we will force the GPU to save
@@ -177,7 +184,7 @@ def train(cfg: dict[str, str], model: BertForTokenClassification, optimizer: opt
             # we rather store its float value, which can be accessed through the
             # `.item` method
             current_loss += loss.item()
-            
+
             if step % 8 == 0 and step > 0:
                 # update the model using the optimizer
                 optimizer.step()
@@ -194,8 +201,9 @@ def train(cfg: dict[str, str], model: BertForTokenClassification, optimizer: opt
     if save_directory:
         model.save_pretrained(save_directory)
     return model
-# %%
-model_finetuned = train(cfg=cfg, model=model_pretrained, dataloader=trainloader, labelset=label_set, optimizer=optimizer,
-    save_directory=cfg["caching"]["finetuned_ner_model"])
+
 
 # %%
+if __name__ == "__main__":
+    model_finetuned = train(cfg=cfg, model=model_pretrained, dataloader=trainloader, labelset=label_set, optimizer=optimizer,
+                            save_directory=cfg["caching"]["finetuned_ner_model"])
