@@ -3,12 +3,14 @@ import re
 import random
 import numpy as np
 import pandas as pd
-from typing import Dict, Tuple, List
 import itertools
 import torch
 from torch.utils.data import Dataset
 from transformers import AutoTokenizer
 from dataclasses import dataclass
+from sklearn.metrics import classification_report
+from typing import Dict, Iterator, List, Tuple, Union
+from collections import defaultdict
 
 
 
@@ -298,3 +300,85 @@ class TraingingBatch:
         self.input_ids = torch.LongTensor(input_ids)
         self.attention_masks = torch.LongTensor(masks)
         self.labels = torch.LongTensor(labels)
+
+
+
+def prepare_batch_for_metrics(batch: TraingingBatch, predictions:torch.Tensor) -> Tuple[List[int], List[int]]:
+    # get the sentence lengths
+    s_lengths = batch.attention_masks.sum(dim=1)
+    # iterate through the examples
+    batch_true_values = []
+    batch_pred_values = []
+    for idx, length in enumerate(s_lengths):
+        # get the true values
+        true_values = batch.labels[idx][:length].tolist()
+        batch_true_values.extend(true_values)
+        # get the predicted values
+        pred_values = torch.argmax(predictions, dim=2)[idx][:length].tolist()
+        batch_pred_values.extend(pred_values)
+    return batch_true_values, batch_pred_values
+
+def bilu_to_non_bilu(iterat: Iterator) -> Dict[str, List[int]]:
+    """Prepare non BILU labels mapping to ids"""
+    tally = defaultdict(list)
+    for i,item in enumerate(iterat):
+        tally[item].append(i)
+    return dict([(key,locs) for key,locs in tally.items()])
+
+@dataclass
+class BiluMappings:
+    non_bilu_label_to_bilu_ids: Dict[str, Tuple[List[int], int]]
+    non_bilu_label_to_id:  Dict[str, int]
+
+# Tuple[Dict[int, Tuple[List[int], int]], Dict[str, int]]
+def ids_to_non_bilu_label_mapping(labelset: LabelSet) -> BiluMappings:
+    """Mapping from ids to BILU and non-BILU mapping. This is used to remove the BILU labels to regular labels"""
+    target_names = list(labelset["ids_to_label"].values())
+    wo_bilu = [bilu_label.split("-")[-1] for bilu_label in target_names]
+    non_bilu_mapping = bilu_to_non_bilu(wo_bilu)
+
+    BiluMappings.non_bilu_label_to_bilu_ids = {}
+    BiluMappings.non_bilu_label_to_id = {}
+    for target_name, labels_list in non_bilu_mapping.items():
+        # 'upper_bound': ([1, 2, 3, 4], 1)
+        BiluMappings.non_bilu_label_to_bilu_ids[target_name] = labels_list, labels_list[0]
+        # 'upper_bound': 1
+        BiluMappings.non_bilu_label_to_id[target_name] = labels_list[0]
+    
+    return BiluMappings
+
+def remove_bilu_ids_from_true_and_pred_values(non_bilu_label_to_bilu_ids: Dict[int, Tuple[List[int], int]], 
+    true_values: List[int], pred_values: List[int]) -> Tuple[List[int], List[int]]:
+    """Reduce the BILI ids (true and predicted) to regular labels and ids"""
+
+    for idx, label in enumerate(true_values):
+        for _, (labels_list, non_bilu_label) in non_bilu_label_to_bilu_ids.items():
+            if label in labels_list:
+                true_values[idx] = int(non_bilu_label)
+    
+    for idx, label in enumerate(pred_values):
+        for _, (labels_list, non_bilu_label) in non_bilu_label_to_bilu_ids.items():
+            if label in labels_list:
+                pred_values[idx] = int(non_bilu_label)
+
+    return true_values, pred_values
+
+
+def get_multilabel_metrics(true_values: List[int], pred_values: List[int],
+    non_bilu_label_to_bilu_ids: Dict[str, Tuple[List[int], int]], non_bilu_label_to_id: Dict[str, int],
+    labelset: LabelSet, remove_bilu: bool = True) -> Dict[str, Dict[str, Union[float, int]]]:
+    """Create a classification report for all labels in the dataset"""
+    
+    if remove_bilu:
+        labels = list(non_bilu_label_to_id.values())
+        target_names = list(non_bilu_label_to_id.keys())
+        true_values, pred_values = remove_bilu_ids_from_true_and_pred_values(non_bilu_label_to_bilu_ids, true_values, pred_values)
+    else:
+        labels = list(labelset["ids_to_label"].keys())
+        target_names = list(labelset["ids_to_label"].values())
+
+    metrics = classification_report(
+        y_true=true_values, y_pred=pred_values, 
+        labels=labels, target_names=target_names, output_dict=True, zero_division=0
+    )
+    return metrics

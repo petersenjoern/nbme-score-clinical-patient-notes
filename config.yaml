@@ -1,11 +1,13 @@
 model:
   name: dmis-lab/biobert-base-cased-v1.1
+  evaluation:
+    remove_bilu: true
 
 hyper_params:
   tokens_per_batch: 32
-  batch_size: 256
-  epochs: 23
-  learning_rate: 5e-6
+  batch_size: 32
+  epochs: 4
+  learning_rate: 2e-5
   shuffle: True
 
 datasets:

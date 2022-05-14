@@ -3,6 +3,9 @@ kaggle/
 kaggle.json
 data/
 metrics/
+model/
+gpu/
+
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
