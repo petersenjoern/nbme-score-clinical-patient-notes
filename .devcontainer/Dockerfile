@@ -1,4 +1,5 @@
-FROM nvcr.io/nvidia/pytorch:22.04-py3
+#FROM nvcr.io/nvidia/pytorch:22.04-py3
+FROM nvcr.io/nvidia/tensorflow:22.05-tf2-py3
 
 # Install packages
 #RUN apt-get update && apt-get install -y --no-install-recommends \
