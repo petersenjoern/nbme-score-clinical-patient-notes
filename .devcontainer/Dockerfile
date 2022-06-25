@@ -16,6 +16,8 @@ RUN python -m pip install --upgrade pip
 RUN pip install -U --no-cache wandb \
     --extra-index-url https://download.pytorch.org/whl/cu113
 
+RUN pip install -U --no-cache datasets
+
 #RUN git clone https://github.com/huggingface/transformers.git && \
 #    cd transformers && \
 #    pip install -e .
