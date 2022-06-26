@@ -51,7 +51,8 @@ class CFG:
     max_len=None
     batch_size=2
 
-
+REMOVE_DATASETS_COLS = ['id', 'case_num', 'pn_num', 'feature_num', 'annotation',
+    'location', 'annotation_length', 'feature_text', 'pn_history', '__index_level_0__']
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
                                     
@@ -199,13 +200,18 @@ if __name__ == "__main__":
     max_len_feature_text = get_max_len_for_feature(df_train, ["feature_text"], CFG.tokenizer)
     CFG.max_len = max_len_pn_history + max_len_feature_text + len(["CLS", "SEP", "SEP"])
 
-    # Prepare train and test data
+    # Split train and test data
     dataset = Dataset.from_pandas(df_train)
     dataset_splitted=dataset.train_test_split(test_size=0.1)
 
 
-    # TODO: preprocess test data as well dataset_splitted["test"]
-    dataset_tf_test = dataset_splitted_xxxxx["test"].to_tf_dataset(
+    # Prepare test data
+    dataset_transformed_test =  dataset_splitted["test"].map(
+            preprocess_input_and_label,
+            num_proc=os.cpu_count()-2,
+            remove_columns=REMOVE_DATASETS_COLS
+    )
+    dataset_tf_test = dataset_transformed_test.to_tf_dataset(
         columns=["input_ids", "token_type_ids", "attention_mask"],
         label_cols=["labels"],
         batch_size=CFG.batch_size,
@@ -213,11 +219,12 @@ if __name__ == "__main__":
         shuffle=True
     )
 
-
-
-    # Prepare data for each fold
-    REMOVE_COLS = ['id', 'case_num', 'pn_num', 'feature_num', 'annotation', 'location', 'annotation_length', 'feature_text', 'pn_history', '__index_level_0__']
-    dataset_transformed = dataset["train"].map(preprocess_input_and_label, num_proc=os.cpu_count()-2, remove_columns=REMOVE_COLS)
+    # Prepare train and val data for each fold
+    dataset_transformed = dataset_splitted["train"].map(
+        preprocess_input_and_label,
+        num_proc=os.cpu_count()-2,
+        remove_columns=REMOVE_DATASETS_COLS
+    )
     
     iteration_n = 0
     dataset_transformed_train_fold = dataset_transformed.filter(lambda example: example['fold'] != iteration_n)
