@@ -36,14 +36,15 @@ print(f"tokenizers.__version__: {tokenizers.__version__}")
 os.system(f'python -m pip install --no-index --find-links={str(BASE_DIR.joinpath("data","input","nbme-pip-wheels-transformers"))} transformers')
 import transformers
 print(f"transformers.__version__: {transformers.__version__}")
-from transformers import AutoTokenizer, AutoModel, AutoConfig, DataCollatorWithPadding
+from transformers import (AutoTokenizer, TFAutoModelForTokenClassification, AutoConfig,
+    DataCollatorWithPadding, DataCollatorForTokenClassification, create_optimizer)
 
 #%%
 ## Configuration
 class CFG:
     debug=True
     fold_n=5
-    modelName="microsoft/deberta-base"
+    model="microsoft/deberta-base"
     epochs=5
     seed=42
     train=True
@@ -146,7 +147,7 @@ def prepare_label(example) -> Dict[str, int]:
     offset_mapping = encoded['offset_mapping']
     ignore_idxes = np.where(np.array(encoded.sequence_ids()) != 0)[0]
     label = np.zeros(len(offset_mapping))
-    label[ignore_idxes] = -1
+    label[ignore_idxes] = -100 # -100 for tf
     if example["annotation_length"] != 0:
         for location in example["location"]:
             for loc in [s.split() for s in location.split(';')]:
@@ -195,15 +196,19 @@ if __name__ == "__main__":
     print(df_train.groupby('fold').size())
     
     # Tokenizer, Model
-    CFG.tokenizer = get_tokenizer(CFG.modelName)
+    CFG.tokenizer = get_tokenizer(CFG.model)
     max_len_pn_history = get_max_len_for_feature(df_train, ["pn_history"], CFG.tokenizer)
     max_len_feature_text = get_max_len_for_feature(df_train, ["feature_text"], CFG.tokenizer)
-    CFG.max_len = max_len_pn_history + max_len_feature_text + len(["CLS", "SEP", "SEP"])
+    CFG.max_len = max_len_pn_history + max_len_feature_text + len(["CLS", "SEP", "UNK"])
+    #CLS sentence start, #SEP sentence end and new start, #UNK tokens not appearing in the original vocabulary,
+    model_config = AutoConfig.from_pretrained(CFG.model, output_hidden_states=True)
+    model = TFAutoModelForTokenClassification.from_pretrained(CFG.model)
+    #model.to(device)
+
 
     # Split train and test data
     dataset = Dataset.from_pandas(df_train)
     dataset_splitted=dataset.train_test_split(test_size=0.1)
-
 
     # Prepare test data
     dataset_transformed_test =  dataset_splitted["test"].map(
@@ -223,7 +228,7 @@ if __name__ == "__main__":
     dataset_transformed = dataset_splitted["train"].map(
         preprocess_input_and_label,
         num_proc=os.cpu_count()-2,
-        remove_columns=REMOVE_DATASETS_COLS
+        #remove_columns=REMOVE_DATASETS_COLS
     )
     
     iteration_n = 0
@@ -234,7 +239,7 @@ if __name__ == "__main__":
         columns=["input_ids", "token_type_ids", "attention_mask"],
         label_cols=["labels"],
         batch_size=CFG.batch_size,
-        collate_fn=DataCollatorWithPadding(tokenizer=CFG.tokenizer, return_tensors="tf"),
+        collate_fn=DataCollatorWithPadding(tokenizer=CFG.tokenizer, return_tensors="tf", max_length=CFG.max_len),
         shuffle=True
     )
 
@@ -242,15 +247,28 @@ if __name__ == "__main__":
         columns=["input_ids", "token_type_ids", "attention_mask"],
         label_cols=["labels"],
         batch_size=CFG.batch_size,
-        collate_fn=DataCollatorWithPadding(tokenizer=CFG.tokenizer, return_tensors="tf"),
+        collate_fn=DataCollatorWithPadding(tokenizer=CFG.tokenizer, return_tensors="tf", max_length=CFG.max_len),
         shuffle=True
     )
 
+    num_train_steps = (dataset_transformed_train_fold.num_rows // CFG.batch_size) * CFG.epochs
+    print(num_train_steps) #TODO: make it a logger
+
+    ## Create AdamWeightDecay and lr PolynomialDecay
+    optimizer, lr_schedule = create_optimizer(
+        init_lr=2e-5,
+        num_train_steps=num_train_steps,
+        weight_decay_rate=0.01,
+        num_warmup_steps=0,
+    )
+    loss = tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True)
+    model.compile(optimizer=optimizer, loss=loss, metrics=["accuracy"])
+    model.fit(x=dataset_tf_train, validation_data=dataset_tf_val, epochs=CFG.epochs)
 
 #%%
 
 
-
+# CFG.tokenizer.decode[ids here]
 #%%
 
 # %%
