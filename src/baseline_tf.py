@@ -36,11 +36,11 @@ print(f"tokenizers.__version__: {tokenizers.__version__}")
 os.system(f'python -m pip install --no-index --find-links={str(BASE_DIR.joinpath("data","input","nbme-pip-wheels-transformers"))} transformers')
 import transformers
 print(f"transformers.__version__: {transformers.__version__}")
-from transformers import (AutoTokenizer, TFAutoModelForTokenClassification, AutoConfig,
+from transformers import (AutoTokenizer, PreTrainedTokenizer, TFAutoModelForTokenClassification, AutoConfig,
     DataCollatorWithPadding, DataCollatorForTokenClassification, create_optimizer)
 
 #%%
-## Configuration
+## Configuration & logging
 class CFG:
     debug=True
     fold_n=5
@@ -52,10 +52,21 @@ class CFG:
     max_len=None
     batch_size=2
 
-REMOVE_DATASETS_COLS = ['id', 'case_num', 'pn_num', 'feature_num', 'annotation',
-    'location', 'annotation_length', 'feature_text', 'pn_history', '__index_level_0__']
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
+def get_logger(filename: str):
+    from logging import getLogger, INFO, StreamHandler, FileHandler, Formatter
+    logger = getLogger(__name__)
+    logger.setLevel(INFO)
+    handler1 = StreamHandler()
+    handler1.setFormatter(Formatter("%(message)s"))
+    handler2 = FileHandler(filename=f"{filename}.log")
+    handler2.setFormatter(Formatter("%(message)s"))
+    logger.addHandler(handler1)
+    logger.addHandler(handler2)
+    return logger
+
+LOGGER = get_logger(filename=__name__)
                                     
 # %%
 ## Functions & Abstractions that are dataset/model specific
@@ -67,6 +78,26 @@ def seed_everything(seed:int=42) -> None:
     np.random.seed(seed)
     tf.random.set_seed(seed)
     os.environ["TF_CUDNN_DETERMINISTIC"] = str(seed)
+
+
+def define_gpu_strategy():
+    """Define the GPU strategy for modelling."""
+
+    gpu_available = tf.config.list_physical_devices('GPU')
+
+    if os.environ["CUDA_VISIBLE_DEVICES"].count(',') == 0:
+        strategy = tf.distribute.get_strategy()
+    else:
+        strategy = tf.distribute.MirroredStrategy()
+    
+    return strategy
+
+def set_mixed_precision():
+    """Set TF mixed precision."""
+    
+    tf.config.optimizer.set_experimental_options({"auto_mixed_precision": True})
+    LOGGER.info("Set TF config to auto mixed precision=True")
+
 
 def load_train_or_val_data(path_to_file: pathlib.Path) -> pd.DataFrame:
     """Load dataset for training or validation"""
@@ -100,15 +131,13 @@ def _preprocess_features(df_features: pd.DataFrame) -> pd.DataFrame:
     df_features.loc[27, 'feature_text'] = "Last-Pap-smear-1-year-ago"
     return df_features
 
-#TODO: define return type
-def get_tokenizer(modelname: str):
+def get_tokenizer(modelname: str) -> PreTrainedTokenizer:
     """Initate, save and return tokenizer for modelname"""
 
     tokenizer = AutoTokenizer.from_pretrained(modelname)
     tokenizer.save_pretrained(OUTPUT_DIR_TOKENIZER)
     return tokenizer
 
-#TODO: add logging instead of print
 def get_max_len_for_feature(df: pd.DataFrame, feature_names: List[str], tokenizer) -> int:
     """Calculate and return max len for feature in df"""
 
@@ -120,12 +149,12 @@ def get_max_len_for_feature(df: pd.DataFrame, feature_names: List[str], tokenize
         for text in tk0:
             length = len(tokenizer(text, add_special_tokens=False)['input_ids'])
             feature_lengths.append(length)
-        print(f'{text_col} max(lengths): {max(feature_lengths)}')
+        LOGGER.info(f'{text_col} max(lengths): {max(feature_lengths)}')
     return max(feature_lengths)
 
-# TODO: example type annotation (dataset one record)
-def prepare_input(example) -> Dict[str, int]:
-    """Tokenize input and return the tokenization result.
+def prepare_input(example: datasets.arrow_dataset.Example) -> Dict[str, int]:
+    """
+    Tokenize input and return the tokenization result.
     Returns: 'attention_mask', 'input_ids', 'token_type_ids'
     """
 
@@ -137,23 +166,29 @@ def prepare_input(example) -> Dict[str, int]:
     return inputs["input_ids"], inputs["attention_mask"], inputs["token_type_ids"]
 
 
-# TODO: step through and annotate and comment
-def prepare_label(example) -> Dict[str, int]:
+def prepare_label(example: datasets.arrow_dataset.Example) -> Dict[str, int]:
     encoded = CFG.tokenizer(example["pn_history"],
                             add_special_tokens=True,
                             max_length=CFG.max_len,
                             padding="max_length",
                             return_offsets_mapping=True)
+    
+    # The offsets_mapping is the tuple(start_char, stop_char) for token in the tokenizer input (pn_history here)
+    # Hence, word != token; there may be multiple tokens per word, therefore the label idx has to be adjusted to the tokens
     offset_mapping = encoded['offset_mapping']
-    ignore_idxes = np.where(np.array(encoded.sequence_ids()) != 0)[0]
+    # sequence_ids() are the ids (0's) where there is a real token; hence ignore all non-real tokens such as CLS, SEP, PAD etc.
+    ignore_idxes = np.where(np.array(encoded.sequence_ids()) != 0)[0] 
     label = np.zeros(len(offset_mapping))
-    label[ignore_idxes] = -100 # -100 for tf
+    label[ignore_idxes] = -100 # -100 for tensorflow; so they can be ignored during training
     if example["annotation_length"] != 0:
+        # "location", this is the NER label idx with start_char, stop_char - can be multiple
+        # preprocess the NER label indexes; eg. split them
         for location in example["location"]:
             for loc in [s.split() for s in location.split(';')]:
                 start_idx = -1
                 end_idx = -1
                 start, end = int(loc[0]), int(loc[1])
+                # align the label(s) to the tokens
                 for idx in range(len(offset_mapping)):
                     if (start_idx == -1) & (start < offset_mapping[idx][0]):
                         start_idx = idx - 1
@@ -165,11 +200,28 @@ def prepare_label(example) -> Dict[str, int]:
                     label[start_idx:end_idx] = 1
     return label
 
-def preprocess_input_and_label(example):
+def preprocess_input_and_label(example: datasets.arrow_dataset.Example) -> datasets.arrow_dataset.Example:
     """Preprocess input and labels at the same time"""
+
     example["input_ids"], example["attention_mask"], example["token_type_ids"] = prepare_input(example)
     example["labels"] = prepare_label(example)
     return example
+
+def add_group_folds(df: pd.DataFrame, n_folds:int, group_col: str = "pn_num") -> pd.DataFrame:
+    """Add column fold with group folds to dataframe based on groupby column"""
+
+    df_copy = df.copy(deep=True)
+    group_k_fold = GroupKFold(n_splits=n_folds)
+    groups = df[group_col].values
+
+    ## x and y in GroupKFold.split() are not essential; we just want the indexes
+    for n, (_, idx) in enumerate(group_k_fold.split(df, df, groups)):
+        df_copy.loc[idx, 'fold'] = int(n)
+    df_copy['fold'] = df_copy['fold'].astype(int)
+    group_sizes = df_copy.groupby('fold').size()
+    LOGGER.info(f'Fold sizes in the dataset: {group_sizes}')
+
+    return df_copy
 
 #%%
 ## Execution (main function)
@@ -185,16 +237,10 @@ if __name__ == "__main__":
     df_train = df_train.merge(df_features, on=['feature_num', 'case_num'], how='left')
     df_train = df_train.merge(df_patient_notes, on=['pn_num', 'case_num'], how='left')
 
+    # Add kfold to data; for cross validation in trainings loop
+    df_train = add_group_folds(df_train, n_folds=CFG.fold_n, group_col="pn_num")
 
-    # Add KFold label to data
-    #TODO: extract this as a function
-    Fold = GroupKFold(n_splits=CFG.fold_n)
-    groups = df_train['pn_num'].values
-    for n, (_, val_index) in enumerate(Fold.split(df_train, df_train['location'], groups)):
-        df_train.loc[val_index, 'fold'] = int(n)
-    df_train['fold'] = df_train['fold'].astype(int)
-    print(df_train.groupby('fold').size())
-    
+
     # Tokenizer, Model
     CFG.tokenizer = get_tokenizer(CFG.model)
     max_len_pn_history = get_max_len_for_feature(df_train, ["pn_history"], CFG.tokenizer)
@@ -203,7 +249,6 @@ if __name__ == "__main__":
     #CLS sentence start, #SEP sentence end and new start, #UNK tokens not appearing in the original vocabulary,
     model_config = AutoConfig.from_pretrained(CFG.model, output_hidden_states=True)
     model = TFAutoModelForTokenClassification.from_pretrained(CFG.model)
-    #model.to(device)
 
 
     # Split train and test data
@@ -213,8 +258,7 @@ if __name__ == "__main__":
     # Prepare test data
     dataset_transformed_test =  dataset_splitted["test"].map(
             preprocess_input_and_label,
-            num_proc=os.cpu_count()-2,
-            remove_columns=REMOVE_DATASETS_COLS
+            num_proc=os.cpu_count()-2
     )
     dataset_tf_test = dataset_transformed_test.to_tf_dataset(
         columns=["input_ids", "token_type_ids", "attention_mask"],
@@ -228,7 +272,6 @@ if __name__ == "__main__":
     dataset_transformed = dataset_splitted["train"].map(
         preprocess_input_and_label,
         num_proc=os.cpu_count()-2,
-        #remove_columns=REMOVE_DATASETS_COLS
     )
     
     iteration_n = 0
@@ -252,7 +295,7 @@ if __name__ == "__main__":
     )
 
     num_train_steps = (dataset_transformed_train_fold.num_rows // CFG.batch_size) * CFG.epochs
-    print(num_train_steps) #TODO: make it a logger
+    LOGGER.info(f"Number of training steps: {num_train_steps}")
 
     ## Create AdamWeightDecay and lr PolynomialDecay
     optimizer, lr_schedule = create_optimizer(
@@ -263,6 +306,7 @@ if __name__ == "__main__":
     )
     loss = tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True)
     model.compile(optimizer=optimizer, loss=loss, metrics=["accuracy"])
+    LOGGER.info(model.summary())
     model.fit(x=dataset_tf_train, validation_data=dataset_tf_val, epochs=CFG.epochs)
 
 #%%
