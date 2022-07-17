@@ -10,7 +10,7 @@ import tensorflow as tf
 print('TF version',tf.__version__)
 
 import datasets
-from datasets import load_dataset, Dataset
+from datasets import load_dataset, Dataset, load_metric
 print(f"datasets version: {datasets.__version__}")
 
 from tqdm.auto import tqdm
@@ -223,6 +223,20 @@ def add_group_folds(df: pd.DataFrame, n_folds:int, group_col: str = "pn_num") ->
 
     return df_copy
 
+
+def get_predictions(model, dataset):
+    """Evaluate NER results"""
+
+    all_predictions = []
+    all_labels = []
+    for batch in dataset:
+        logits = model.predict(batch)["logits"]
+        labels = batch["labels"]
+        predictions = np.argmax(logits, axis=-1)
+        all_predictions.append(predictions)
+        all_labels.append(labels)
+    return all_predictions, all_labels
+
 #%%
 ## Execution (main function)
 
@@ -236,6 +250,12 @@ if __name__ == "__main__":
 
     df_train = df_train.merge(df_features, on=['feature_num', 'case_num'], how='left')
     df_train = df_train.merge(df_patient_notes, on=['pn_num', 'case_num'], how='left')
+
+    # NER labels
+    ner_labels = df_train["feature_text"].unique()
+    id2label = {str(i): label for i, label in enumerate(ner_labels)}
+    label2id = {v: k for k, v in id2label.items()}
+
 
     # Add kfold to data; for cross validation in trainings loop
     df_train = add_group_folds(df_train, n_folds=CFG.fold_n, group_col="pn_num")
@@ -297,21 +317,26 @@ if __name__ == "__main__":
     num_train_steps = (dataset_transformed_train_fold.num_rows // CFG.batch_size) * CFG.epochs
     LOGGER.info(f"Number of training steps: {num_train_steps}")
 
-    ## Create AdamWeightDecay and lr PolynomialDecay
-    optimizer, lr_schedule = create_optimizer(
-        init_lr=2e-5,
-        num_train_steps=num_train_steps,
-        weight_decay_rate=0.01,
-        num_warmup_steps=0,
-    )
-    loss = tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True)
-    model.compile(optimizer=optimizer, loss=loss, metrics=["accuracy"])
-    LOGGER.info(model.summary())
-    model.fit(x=dataset_tf_train, validation_data=dataset_tf_val, epochs=CFG.epochs)
+    if CFG.train:
+        ## Create AdamWeightDecay and lr PolynomialDecay
+        optimizer, lr_schedule = create_optimizer(
+            init_lr=2e-5,
+            num_train_steps=num_train_steps,
+            weight_decay_rate=0.01,
+            num_warmup_steps=0,
+        )
+        loss = tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True)
+        model.compile(optimizer=optimizer, loss=loss, metrics=["accuracy"])
+        LOGGER.info(model.summary())
+        model.fit(x=dataset_tf_train, validation_data=dataset_tf_val, epochs=1) # change back to cfg.epochs
+        #TODO: save the model so it can be reused for developing the code for evaluation
 
-#%%
-
-
+    else:
+        # model = load()
+    
+    #TODO: obtain the predictions, get_char_probs, translate to chars and compare against valid labels
+    predictions, labels = get_predictions(model, dataset_tf_val)
+    print(predictions)
 # CFG.tokenizer.decode[ids here]
 #%%
 
